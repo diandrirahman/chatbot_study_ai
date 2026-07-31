@@ -110,6 +110,7 @@ Respons API yang gagal menggunakan kontrak aman `success: false` dengan kode err
 
 - `GEMINI_API_KEY` dan `GEMINI_MODEL` hanya dibaca server dari `server/.env`.
 - `server/.env` tidak boleh di-commit. Repository hanya menyertakan `server/.env.example` dengan placeholder.
+- Daily Firestore limit dinonaktifkan pada environment example lokal. Aktifkan `AI_DAILY_LIMIT=100` hanya setelah Firestore/ADC tersedia, seperti pada Cloud Run.
 - Markdown dari AI disanitasi tepat sebelum ditampilkan untuk mencegah HTML atau JavaScript berbahaya dieksekusi.
 - localStorage rusak atau tidak valid dipulihkan ke empty state yang aman tanpa crash.
 - **Clear Plan** menghapus profile, plan, percakapan, sesi, kuis, serta progress dari browser.
@@ -137,6 +138,51 @@ server/              Express API
 - **Plan atau progress tidak muncul setelah refresh:** periksa apakah browser mengizinkan localStorage untuk origin lokal. Menghapus data situs akan menghapus state belajar.
 - **Perubahan `.env` tidak terbaca:** hentikan proses `npm run dev`, lalu jalankan kembali agar backend memuat environment terbaru.
 - **Health endpoint gagal:** pastikan backend berjalan di port yang sesuai `PORT` pada `server/.env`.
+
+## Deployment: Vercel dan Google Cloud Run
+
+### Backend Cloud Run
+
+1. Buat project Google Cloud, aktifkan Cloud Run, Cloud Build, Artifact Registry, dan Firestore API.
+2. Buat Firestore Native di region `asia-southeast2`.
+3. Buat service account khusus Cloud Run dan berikan role `Cloud Datastore User` (`roles/datastore.user`). Firestore hanya menyimpan counter harian, bukan data pengguna.
+4. Deploy repository menggunakan `Dockerfile` dengan konfigurasi berikut:
+
+   - Region: `asia-southeast2`
+   - CPU: 1
+   - Memory: 512 MiB
+   - Minimum instances: 0
+   - Maximum instances: 1
+   - Concurrency: 20
+   - Request timeout: 60 detik
+   - Authentication: allow unauthenticated
+
+5. Tambahkan environment variable Cloud Run tanpa memasukkan nilainya ke GitHub:
+
+   ```text
+   GEMINI_API_KEY
+   GEMINI_MODEL
+   ALLOWED_ORIGINS=https://nama-project.vercel.app
+   AI_DAILY_LIMIT=100
+   AI_HOURLY_IP_LIMIT=20
+   APP_TIMEZONE=Asia/Jakarta
+   ```
+
+6. Pastikan `GET https://URL-CLOUD-RUN/api/health` mengembalikan HTTP 200.
+
+### Frontend Vercel
+
+1. Import repository GitHub ke Vercel. Konfigurasi build sudah tersedia pada `vercel.json`.
+2. Tambahkan `VITE_API_BASE_URL=https://URL-CLOUD-RUN` pada Environment Variables Vercel.
+3. Deploy production dan salin URL production ke `ALLOWED_ORIGINS` Cloud Run, lalu deploy ulang backend.
+
+### Perlindungan biaya
+
+- Setiap request valid ke chat, session generation, atau quiz generation memakai satu kuota AI.
+- Limit global adalah 100 request AI per hari dan disimpan secara atomik di Firestore dengan reset zona waktu `Asia/Jakarta`.
+- Limit burst per IP adalah 20 request AI per jam.
+- Saat limit tercapai, backend mengembalikan HTTP 429 tanpa memanggil Gemini.
+- Buat Cloud Billing budget sebesar USD 1 dengan notifikasi pada 50%, 90%, dan 100%. Budget alert tidak otomatis menghentikan service; limit aplikasi adalah pengaman utama.
 
 ## Batasan
 

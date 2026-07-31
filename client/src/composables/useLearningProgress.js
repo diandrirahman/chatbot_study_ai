@@ -127,7 +127,7 @@ export function useLearningProgress({ api = defaultApi } = {}) {
       sessions.value.forEach((session) => { progress[session.id] = !reset && previousProgress[session.id] ? previousProgress[session.id] : defaultProgress() })
       selectedSessionId.value = sessions.value.find((session) => !isSessionComplete(session.id))?.id ?? sessions.value[0]?.id ?? null
       persist(); return true
-    } catch { sessionsError.value = 'sessions-load-failed'; return false }
+    } catch (error) { sessionsError.value = error?.code === 'RATE_LIMITED' ? 'rate-limited' : 'sessions-load-failed'; return false }
     finally { sessionsLoading.value = false }
   }
   function selectSession(id) { if (sessions.value.some((session) => session.id === id)) selectedSessionId.value = id }
@@ -138,7 +138,7 @@ export function useLearningProgress({ api = defaultApi } = {}) {
     if (quizLoadingId.value) return false
     quizLoadingId.value = session.id; quizError.value = ''
     try { const data = await api.requestQuiz({ profile: { ...profile, studyDays: [...profile.studyDays] }, session }); if (!validQuiz(data.quiz)) throw new Error('Invalid quiz'); item.quiz = data.quiz; item.answers = {}; item.showResult = false; persist(); return true }
-    catch { quizError.value = 'quiz-load-failed'; return false }
+    catch (error) { quizError.value = error?.code === 'RATE_LIMITED' ? 'rate-limited' : 'quiz-load-failed'; return false }
     finally { quizLoadingId.value = null }
   }
   function answerQuestion(sessionId, questionId, optionId) { const item = ensureProgress(sessionId); item.answers[questionId] = optionId; item.showResult = false; quizError.value = '' }

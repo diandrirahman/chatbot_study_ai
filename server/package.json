@@ -10,8 +10,11 @@
     "test": "node --test"
   },
   "dependencies": {
+    "@google-cloud/firestore": "^8.7.0",
     "@google/genai": "^2.15.0",
+    "cors": "^2.8.6",
     "dotenv": "^17.2.1",
-    "express": "^5.1.0"
+    "express": "^5.1.0",
+    "express-rate-limit": "^8.6.1"
   }
 }

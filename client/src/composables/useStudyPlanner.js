@@ -47,11 +47,15 @@ export function useStudyPlanner({ requestChat = defaultRequestChat } = {}) {
       lastResponseType.value = typeof data.responseType === 'string' ? data.responseType : payload.mode === 'create-study-plan' ? 'plan-created' : 'focused-answer'
       pendingMessage.value = ''; failedRequest = null; conversationState.value = 'success'; persist()
       return true
-    } catch {
+    } catch (error) {
       if (sequence !== requestSequence) return false
       pendingMessage.value = ''
       if (payload.mode === 'adjust-study-plan') adjustmentMessage.value = payload.message
-      failedRequest = payload; requestError.value = 'We could not complete your request. Please try again.'; conversationState.value = 'error'
+      failedRequest = payload
+      requestError.value = error?.code === 'RATE_LIMITED'
+        ? (profile.language === 'id' ? 'Batas penggunaan telah tercapai. Silakan coba lagi nanti.' : 'The usage limit has been reached. Please try again later.')
+        : 'We could not complete your request. Please try again.'
+      conversationState.value = 'error'
       return false
     } finally {
       if (sequence === requestSequence) isSubmitting.value = false

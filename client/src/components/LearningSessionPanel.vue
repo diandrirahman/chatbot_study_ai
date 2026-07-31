@@ -10,7 +10,7 @@ const latestScore = computed(() => props.progress.attempts?.at(-1)?.score)
 const safeUrl = (value) => { try { const url = new URL(value); return ['http:','https:'].includes(url.protocol) ? url.href : null } catch { return null } }
 const text = (value) => normalizeStudyNotation(value)
 const labels = computed(() => getWorkspaceLabels(props.language))
-const quizErrorMessage = computed(() => props.quizError === 'quiz-incomplete' ? labels.value.answerAll : labels.value.quizLoadError)
+const quizErrorMessage = computed(() => props.quizError === 'quiz-incomplete' ? labels.value.answerAll : props.quizError === 'rate-limited' ? labels.value.rateLimited : labels.value.quizLoadError)
 </script>
 
 <template>

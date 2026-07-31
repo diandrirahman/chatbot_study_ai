@@ -33,6 +33,13 @@ test('chat API uses native fetch with the documented endpoint and JSON body', as
   assert.equal(calls[0].options.headers['Content-Type'], 'application/json'); assert.equal(JSON.parse(calls[0].options.body).mode, 'create-study-plan'); assert.equal(data.answer, '# API plan')
 })
 
+test('production API base URL is applied without a trailing slash', async () => {
+  const calls = []
+  const requestChat = createChatApi(async (url) => { calls.push(url); return response('# Deployed plan') }, 'https://api.example.com/')
+  await requestChat({ mode: 'create-study-plan', message: 'Create a plan', profile: {}, history: [] })
+  assert.deepEqual(calls, ['https://api.example.com/api/chat'])
+})
+
 test('generate sends one valid create request and prevents double submit', async () => {
   clearStorage(); let resolveFetch; const calls = []
   const planner = useStudyPlanner({ requestChat: (payload) => { calls.push(payload); return new Promise((resolve) => { resolveFetch = resolve }) } })
@@ -133,6 +140,17 @@ test('failed request preserves adjustment input and retry resends it', async () 
   assert.equal(await planner.submitAdjustment(), false); assert.equal(planner.adjustmentMessage.value, 'Make the plan lighter.'); assert.equal(planner.conversationState.value, 'error')
   assert.equal(planner.pendingMessage.value, '')
   assert.equal(await planner.retryRequest(), true); assert.equal(attempt, 2); assert.equal(planner.adjustmentMessage.value, ''); assert.equal(planner.history.value.at(-1).content, '# Recovered')
+})
+
+test('rate limited request preserves input and exposes a safe localized message', async () => {
+  clearStorage()
+  const limited = new Error('provider detail'); limited.code = 'RATE_LIMITED'
+  const planner = useStudyPlanner({ requestChat: async () => { throw limited } })
+  validProfile(planner); planner.adjustmentMessage.value = 'Kurangi waktu belajar.'
+  assert.equal(await planner.submitAdjustment(), false)
+  assert.equal(planner.adjustmentMessage.value, 'Kurangi waktu belajar.')
+  assert.equal(planner.requestError.value, 'Batas penggunaan telah tercapai. Silakan coba lagi nanti.')
+  assert.equal(planner.history.value.length, 0)
 })
 
 test('clear plan resets profile, history, and persisted state', async () => {

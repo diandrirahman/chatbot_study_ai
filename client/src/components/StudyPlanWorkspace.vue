@@ -67,7 +67,7 @@ watch(() => props.sessions, () => { requestedMode.value = null })
 
     <div class="plan-dashboard">
       <div class="plan-main-column">
-        <section v-if="!currentSession" class="session-generation-state" :class="{ error: sessionsError }" aria-live="polite"><span class="section-kicker">{{ labels.learningSessions }}</span><h2>{{ sessionsLoading ? labels.preparingSessions : sessionsError ? labels.sessionsUnavailable : labels.preparingSessions }}</h2><p>{{ labels.planSafe }}</p><button v-if="sessionsError" class="button button-secondary" type="button" @click="$emit('retry-sessions')">{{ labels.tryAgain }}</button></section>
+        <section v-if="!currentSession" class="session-generation-state" :class="{ error: sessionsError }" aria-live="polite"><span class="section-kicker">{{ labels.learningSessions }}</span><h2>{{ sessionsLoading ? labels.preparingSessions : sessionsError ? labels.sessionsUnavailable : labels.preparingSessions }}</h2><p>{{ sessionsError === 'rate-limited' ? labels.rateLimited : labels.planSafe }}</p><button v-if="sessionsError" class="button button-secondary" type="button" @click="$emit('retry-sessions')">{{ labels.tryAgain }}</button></section>
 
         <template v-else-if="workspaceMode === 'overview'">
           <section class="overview-intro" aria-labelledby="overview-session-title"><div><span class="section-kicker">{{ labels.selectedSession }}</span><h3 id="overview-session-title">{{ currentSession.title }}</h3><p>{{ labels.overviewIntro }}</p></div><button class="button button-primary" type="button" @click="openSession(currentSession.id)">{{ labels.startLearning }} →</button></section>

@@ -1,0 +1,13 @@
+.git
+.agent
+.npm-cache
+docs
+node_modules
+client
+server/.env*
+!server/.env.example
+*PRD*
+*prd*
+coverage
+dist
+*.log
