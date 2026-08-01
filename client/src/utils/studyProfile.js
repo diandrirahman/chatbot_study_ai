@@ -1,5 +1,6 @@
 export const PROFILE_STORAGE_KEY = 'studymate.profile.v1'
 export const HISTORY_STORAGE_KEY = 'studymate.history.v1'
+export const PLAN_STORAGE_KEY = 'studymate.plan.v1'
 export const MAX_HISTORY_MESSAGES = 10
 export const MAX_HISTORY_CHARACTERS = 12000
 
@@ -50,13 +51,21 @@ export function isStorableProfile(profile) {
   return Boolean(profile) && typeof profile.subject === 'string' && typeof profile.goal === 'string' && levels.has(profile.level) && Number.isInteger(profile.durationDays) && Number.isInteger(profile.dailyMinutes) && Array.isArray(profile.studyDays) && new Set(profile.studyDays).size === profile.studyDays.length && profile.studyDays.every((day) => days.has(day)) && styles.has(profile.learningStyle) && intensities.has(profile.intensity) && languages.has(profile.language)
 }
 
-export function boundHistory(history) {
+export function normalizeTranscript(history) {
   if (!Array.isArray(history)) return null
   const normalized = []
   for (const item of history) {
     if (!item || !['user', 'assistant'].includes(item.role) || typeof item.content !== 'string' || !item.content.trim()) return null
-    normalized.push({ role: item.role, content: item.content.trim() })
+    const message = { role: item.role, content: item.content.trim() }
+    if (item.role === 'assistant' && ['focused-answer', 'plan-adjustment', 'target-change'].includes(item.responseType)) message.responseType = item.responseType
+    normalized.push(message)
   }
+  return normalized
+}
+
+export function boundHistory(history) {
+  const normalized = normalizeTranscript(history)
+  if (normalized === null) return null
 
   const recent = normalized.slice(-MAX_HISTORY_MESSAGES)
   const exchanges = []
@@ -74,7 +83,7 @@ export function boundHistory(history) {
   for (const exchange of exchanges.reverse()) {
     const exchangeCharacters = exchange.reduce((total, item) => total + item.content.length, 0)
     if (chars + exchangeCharacters > MAX_HISTORY_CHARACTERS) break
-    result.unshift(...exchange)
+    result.unshift(...exchange.map(({ role, content }) => ({ role, content })))
     chars += exchangeCharacters
   }
   return result

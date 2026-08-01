@@ -13,7 +13,7 @@ global.window = {
 const { useStudyPlanner } = await import('../src/composables/useStudyPlanner.js')
 const { useBackendReadiness } = await import('../src/composables/useBackendReadiness.js')
 const { createChatApi } = await import('../src/services/chatApi.js')
-const { boundHistory, validateProfileStep } = await import('../src/utils/studyProfile.js')
+const { HISTORY_STORAGE_KEY, PLAN_STORAGE_KEY, PROFILE_STORAGE_KEY, boundHistory, validateProfileStep } = await import('../src/utils/studyProfile.js')
 
 const response = (answer = '# Plan') => ({ ok: true, json: async () => ({ success: true, data: { answer, generatedAt: new Date().toISOString() } }) })
 const validProfile = (planner) => { planner.profile.subject = 'React.js'; planner.profile.goal = 'Mampu membuat website sederhana' }
@@ -104,7 +104,7 @@ test('generate sends one valid create request and prevents double submit', async
   assert.equal(planner.pendingMessage.value, calls[0].message); assert.equal(planner.history.value.length, 0)
   assert.equal(calls[0].mode, 'create-study-plan'); assert.equal(calls[0].history.length, 0); assert.ok(calls[0].message.length > 0)
   resolveFetch({ answer: '# Rencana Belajar', generatedAt: new Date().toISOString() })
-  assert.equal(await first, true); assert.equal(planner.pendingMessage.value, ''); assert.equal(planner.history.value.length, 2); assert.equal(planner.history.value[1].role, 'assistant')
+  assert.equal(await first, true); assert.equal(planner.pendingMessage.value, ''); assert.equal(planner.planMarkdown.value, '# Rencana Belajar'); assert.equal(planner.history.value.length, 0)
 })
 
 test('adjustment uses bounded history and appends the successful response', async () => {
@@ -115,7 +115,7 @@ test('adjustment uses bounded history and appends the successful response', asyn
   planner.adjustmentMessage.value = 'Pindahkan jadwal Sabtu ke Minggu.'
   assert.equal(await planner.submitAdjustment(), true)
   assert.equal(calls[0].mode, 'adjust-study-plan'); assert.equal(calls[0].history.length, 10); assert.equal(calls[0].message, 'Pindahkan jadwal Sabtu ke Minggu.')
-  assert.equal(planner.history.value.at(-1).content, '# Revisi')
+  assert.equal(planner.history.value.at(-1).content, '# Revisi'); assert.equal(planner.history.value.length, 14)
 })
 
 test('adjustment cannot send a request without a valid Study Profile', async () => {
@@ -207,13 +207,64 @@ test('rate limited request preserves input and exposes a safe localized message'
   assert.equal(planner.history.value.length, 0)
 })
 
-test('clear plan resets profile, history, and persisted state', async () => {
+test('plan document stays separate while transcript keeps every successful adjustment', async () => {
+  clearStorage(); const responses = ['# Plan minggu 1 sampai selesai', '# Materi hari pertama', '# Materi hari kedua', '# Materi hari ketiga']
+  const planner = useStudyPlanner({ requestChat: async () => ({ answer: responses.shift(), generatedAt: new Date().toISOString() }) })
+  validProfile(planner)
+  await planner.submitProfile()
+  for (const message of ['Apa materi hari pertama?', 'Apa materi hari kedua?', 'Apa materi hari ketiga?']) {
+    planner.adjustmentMessage.value = message
+    await planner.submitAdjustment()
+  }
+  assert.equal(planner.planMarkdown.value, '# Plan minggu 1 sampai selesai')
+  assert.equal(planner.history.value.length, 6)
+  assert.equal(planner.history.value[0].content, 'Apa materi hari pertama?')
+  assert.equal(planner.history.value.at(-1).content, '# Materi hari ketiga')
+  assert.equal(JSON.parse(database.get(HISTORY_STORAGE_KEY)).length, 6)
+  assert.equal(database.get(PLAN_STORAGE_KEY), '# Plan minggu 1 sampai selesai')
+})
+
+test('regenerating a plan uses the profile only and replaces the old transcript after success', async () => {
+  clearStorage(); const calls = []; const answers = ['# Plan awal', '# Jawaban chat', '# Plan baru']
+  const planner = useStudyPlanner({ requestChat: async (payload) => { calls.push(payload); return { answer: answers.shift(), generatedAt: new Date().toISOString() } } })
+  validProfile(planner)
+  await planner.submitProfile()
+  planner.adjustmentMessage.value = 'Apa materi hari pertama?'
+  await planner.submitAdjustment()
+  assert.equal(planner.history.value.length, 2)
+
+  await planner.submitProfile()
+  assert.equal(calls.at(-1).mode, 'create-study-plan')
+  assert.deepEqual(calls.at(-1).history, [])
+  assert.equal(planner.planMarkdown.value, '# Plan baru')
+  assert.deepEqual(planner.history.value, [])
+  assert.equal(database.get(PLAN_STORAGE_KEY), '# Plan baru')
+  assert.deepEqual(JSON.parse(database.get(HISTORY_STORAGE_KEY)), [])
+})
+
+test('legacy combined history migrates its first assistant response into the separate plan store', () => {
+  clearStorage()
+  const profile = { ...useStudyPlanner().profile, subject: 'React.js', goal: 'Mampu membuat website sederhana' }
+  database.set(PROFILE_STORAGE_KEY, JSON.stringify(profile))
+  database.set(HISTORY_STORAGE_KEY, JSON.stringify([
+    { role: 'user', content: 'Buatkan rencana belajar React.' },
+    { role: 'assistant', content: '# Rencana awal' },
+    { role: 'user', content: 'Apa materi hari pertama?' },
+    { role: 'assistant', content: '# Materi hari pertama' },
+  ]))
+  const planner = useStudyPlanner()
+  assert.equal(planner.planMarkdown.value, '# Rencana awal')
+  assert.deepEqual(planner.history.value.map((message) => message.content), ['Apa materi hari pertama?', '# Materi hari pertama'])
+  assert.equal(database.get(PLAN_STORAGE_KEY), '# Rencana awal')
+})
+
+test('clear plan resets profile, plan document, transcript, and persisted state', async () => {
   clearStorage()
   const planner = useStudyPlanner({ requestChat: async () => ({ answer: '# Saved plan', generatedAt: new Date().toISOString() }) })
   validProfile(planner); await planner.submitProfile()
   const restored = useStudyPlanner({ requestChat: async () => response() })
-  assert.equal(restored.conversationState.value, 'restored'); assert.equal(restored.profile.subject, 'React.js'); assert.equal(restored.history.value.length, 2)
+  assert.equal(restored.conversationState.value, 'restored'); assert.equal(restored.profile.subject, 'React.js'); assert.equal(restored.planMarkdown.value, '# Saved plan'); assert.equal(restored.history.value.length, 0)
   restored.clearPlan()
-  assert.equal(restored.history.value.length, 0); assert.equal(restored.profile.subject, ''); assert.equal(restored.profile.goal, ''); assert.equal(restored.conversationState.value, 'empty')
-  assert.equal(database.has('studymate.profile.v1'), false); assert.equal(database.has('studymate.history.v1'), false)
+  assert.equal(restored.history.value.length, 0); assert.equal(restored.planMarkdown.value, ''); assert.equal(restored.profile.subject, ''); assert.equal(restored.profile.goal, ''); assert.equal(restored.conversationState.value, 'empty')
+  assert.equal(database.has(PROFILE_STORAGE_KEY), false); assert.equal(database.has(PLAN_STORAGE_KEY), false); assert.equal(database.has(HISTORY_STORAGE_KEY), false)
 })
