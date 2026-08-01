@@ -18,15 +18,16 @@ StudyMate AI adalah aplikasi perencana belajar berbasis AI. Pengguna membuat Stu
 - Backend: Express 5.
 - AI: Google Gemini melalui SDK `@google/genai`, hanya dari backend.
 - Validasi: validator request pada backend dan validasi form pada frontend.
-- Persistence MVP: localStorage browser; tidak menggunakan database atau autentikasi.
+- Persistence pengguna: localStorage browser. Upstash Redis hanya menyimpan counter kuota AI dan tidak menyimpan data pengguna.
 
 ```text
-Browser Vue SPA
-  ├─ Study Profile, plan, roadmap, sesi, kuis, progress
-  ├─ localStorage
-  └─ /api → Express API
-               ├─ validator dan error handler
-               └─ Gemini: plan, sesi, dan kuis
+Browser Vue SPA (Vercel)
+  |-- Study Profile, plan, roadmap, sesi, kuis, progress
+  |-- localStorage
+  `-- HTTPS --> Express API (Render)
+                  |-- validator, limiter, dan error handler
+                  |-- Upstash Redis: counter kuota AI
+                  `-- Gemini: plan, sesi, dan kuis
 ```
 
 ## Prasyarat
@@ -110,11 +111,11 @@ Respons API yang gagal menggunakan kontrak aman `success: false` dengan kode err
 
 - `GEMINI_API_KEY` dan `GEMINI_MODEL` hanya dibaca server dari `server/.env`.
 - `server/.env` tidak boleh di-commit. Repository hanya menyertakan `server/.env.example` dengan placeholder.
-- Daily Firestore limit dinonaktifkan pada environment example lokal. Aktifkan `AI_DAILY_LIMIT=100` hanya setelah Firestore/ADC tersedia, seperti pada Cloud Run.
+- Daily Upstash limit dinonaktifkan pada environment example lokal. Aktifkan `AI_DAILY_LIMIT=100` hanya setelah kredensial Upstash tersedia.
 - Markdown dari AI disanitasi tepat sebelum ditampilkan untuk mencegah HTML atau JavaScript berbahaya dieksekusi.
 - localStorage rusak atau tidak valid dipulihkan ke empty state yang aman tanpa crash.
 - **Clear Plan** menghapus profile, plan, percakapan, sesi, kuis, serta progress dari browser.
-- Aplikasi ini tidak menyediakan login, database, kalender, notifikasi, upload materi, atau ujian terproteksi.
+- Aplikasi ini tidak menyediakan login, database data pengguna, kalender, notifikasi, upload materi, atau ujian terproteksi.
 
 ## Struktur proyek
 
@@ -138,51 +139,67 @@ server/              Express API
 - **Plan atau progress tidak muncul setelah refresh:** periksa apakah browser mengizinkan localStorage untuk origin lokal. Menghapus data situs akan menghapus state belajar.
 - **Perubahan `.env` tidak terbaca:** hentikan proses `npm run dev`, lalu jalankan kembali agar backend memuat environment terbaru.
 - **Health endpoint gagal:** pastikan backend berjalan di port yang sesuai `PORT` pada `server/.env`.
+- **Render sedang bangun:** tunggu status “Menyiapkan StudyMate AI” selesai. Frontend menunggu health hingga sekitar 90 detik dan menyediakan retry tanpa menghapus input.
+- **Semua request AI mendapat `AI_SERVICE_ERROR`:** pastikan REST URL dan REST token Upstash benar. Saat counter tidak tersedia, backend sengaja menolak request sebelum Gemini dipanggil.
+- **Cron gagal setelah backend lama idle:** request pertama dapat melewati timeout ketika membangunkan Render Free. Periksa bahwa eksekusi berikutnya kembali menerima HTTP 200.
 
-## Deployment: Vercel dan Google Cloud Run
+## Deployment: Vercel dan Render
 
-### Backend Cloud Run
+### 1. Counter Upstash Redis
 
-1. Buat project Google Cloud, aktifkan Cloud Run, Cloud Build, Artifact Registry, dan Firestore API.
-2. Buat Firestore Native di region `asia-southeast2`.
-3. Buat service account khusus Cloud Run dan berikan role `Cloud Datastore User` (`roles/datastore.user`). Firestore hanya menyimpan counter harian, bukan data pengguna.
-4. Deploy repository menggunakan `Dockerfile` dengan konfigurasi berikut:
+1. Buat database Redis pada Upstash dan pilih region yang dekat dengan Singapore.
+2. Salin REST URL dan REST token ke tempat penyimpanan secret. Jangan memasukkannya ke GitHub atau frontend.
+3. Upstash hanya dipakai untuk counter global harian. Profile, percakapan, plan, sessions, dan quiz tetap berada di browser pengguna.
 
-   - Region: `asia-southeast2`
-   - CPU: 1
-   - Memory: 512 MiB
-   - Minimum instances: 0
-   - Maximum instances: 1
-   - Concurrency: 20
-   - Request timeout: 60 detik
-   - Authentication: allow unauthenticated
+### 2. Backend Render
 
-5. Tambahkan environment variable Cloud Run tanpa memasukkan nilainya ke GitHub:
+1. Hubungkan repository GitHub ke Render sebagai **Blueprint** menggunakan `render.yaml`, atau buat satu Web Service dengan konfigurasi ekuivalen.
+2. Gunakan branch `main`, runtime Node, plan Free, dan region Singapore.
+3. Isi secret yang ditandai `sync: false` pada dashboard Render:
 
    ```text
-   GEMINI_API_KEY
-   GEMINI_MODEL
+   GEMINI_API_KEY=<secret>
    ALLOWED_ORIGINS=https://nama-project.vercel.app
+   UPSTASH_REDIS_REST_URL=<secret>
+   UPSTASH_REDIS_REST_TOKEN=<secret>
+   ```
+
+4. Pastikan environment non-secret berikut tersedia:
+
+   ```text
+   GEMINI_MODEL=gemini-3.5-flash-lite
    AI_DAILY_LIMIT=100
    AI_HOURLY_IP_LIMIT=20
    APP_TIMEZONE=Asia/Jakarta
+   NODE_ENV=production
    ```
 
-6. Pastikan `GET https://URL-CLOUD-RUN/api/health` mengembalikan HTTP 200.
+5. Deploy lalu pastikan `GET https://URL-RENDER/api/health` mengembalikan HTTP 200 dan body kontrak health yang terdokumentasi.
 
-### Frontend Vercel
+### 3. Frontend Vercel
 
 1. Import repository GitHub ke Vercel. Konfigurasi build sudah tersedia pada `vercel.json`.
-2. Tambahkan `VITE_API_BASE_URL=https://URL-CLOUD-RUN` pada Environment Variables Vercel.
-3. Deploy production dan salin URL production ke `ALLOWED_ORIGINS` Cloud Run, lalu deploy ulang backend.
+2. Tambahkan `VITE_API_BASE_URL=https://URL-RENDER` pada Environment Variables Vercel.
+3. Deploy production dan salin URL production ke `ALLOWED_ORIGINS` Render, lalu deploy ulang backend bila origin berubah.
+
+Frontend langsung memanggil health endpoint ketika halaman dibuka. Form tetap dapat diisi selama Render bangun dari kondisi idle, dan request AI menunggu backend siap tanpa mengirim submit ganda.
+
+### 4. Keep-alive best-effort
+
+1. Buat akun di [cron-job.org](https://cron-job.org/).
+2. Tambahkan HTTP GET ke `https://URL-RENDER/api/health` dengan interval setiap 10 menit.
+3. Aktifkan notifikasi kegagalan dan pastikan execution history menerima HTTP 200.
+4. Jangan arahkan cron ke endpoint chat, sessions, atau quiz karena endpoint tersebut memakai kuota AI.
+
+Render Free dapat tidur atau direstart sewaktu-waktu. Monitor mengurangi kemungkinan cold start, tetapi bukan pengganti SLA instance berbayar. Jika cron pertama membangunkan service dan melewati timeout monitor, request berikutnya seharusnya berhasil setelah service aktif.
 
 ### Perlindungan biaya
 
 - Setiap request valid ke chat, session generation, atau quiz generation memakai satu kuota AI.
-- Limit global adalah 100 request AI per hari dan disimpan secara atomik di Firestore dengan reset zona waktu `Asia/Jakarta`.
+- Limit global adalah 100 request AI per hari dan disimpan secara atomik di Upstash Redis dengan reset zona waktu `Asia/Jakarta`.
 - Limit burst per IP adalah 20 request AI per jam.
 - Saat limit tercapai, backend mengembalikan HTTP 429 tanpa memanggil Gemini.
-- Buat Cloud Billing budget sebesar USD 1 dengan notifikasi pada 50%, 90%, dan 100%. Budget alert tidak otomatis menghentikan service; limit aplikasi adalah pengaman utama.
+- Health check dan payload invalid tidak memakai kuota. Provider failure tetap memakai satu kuota karena request sudah diizinkan untuk mencapai Gemini.
 
 ## Batasan
 

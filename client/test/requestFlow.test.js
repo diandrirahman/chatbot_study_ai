@@ -11,12 +11,66 @@ global.window = {
 }
 
 const { useStudyPlanner } = await import('../src/composables/useStudyPlanner.js')
+const { useBackendReadiness } = await import('../src/composables/useBackendReadiness.js')
 const { createChatApi } = await import('../src/services/chatApi.js')
 const { boundHistory, validateProfileStep } = await import('../src/utils/studyProfile.js')
 
 const response = (answer = '# Plan') => ({ ok: true, json: async () => ({ success: true, data: { answer, generatedAt: new Date().toISOString() } }) })
 const validProfile = (planner) => { planner.profile.subject = 'React.js'; planner.profile.goal = 'Mampu membuat website sederhana' }
 const clearStorage = () => database.clear()
+
+test('backend pre-warm coalesces concurrent checks and reuses a fresh success', async () => {
+  let resolveHealth
+  const calls = []
+  const readiness = useBackendReadiness({
+    baseUrl: 'https://api.example.com',
+    clock: () => 1000,
+    fetchImplementation: (url) => {
+      calls.push(url)
+      return new Promise((resolve) => { resolveHealth = resolve })
+    },
+  })
+  const first = readiness.warmUp()
+  const second = readiness.ensureReady()
+  assert.equal(readiness.status.value, 'warming')
+  assert.equal(calls.length, 1)
+  resolveHealth({ ok: true, json: async () => ({ success: true, message: 'StudyMate AI API is running' }) })
+  assert.deepEqual(await Promise.all([first, second]), [true, true])
+  assert.equal(readiness.status.value, 'ready')
+  assert.equal(await readiness.ensureReady(), true)
+  assert.equal(calls.length, 1)
+})
+
+test('generate waits for backend readiness and still prevents double submit', async () => {
+  clearStorage(); let releaseBackend; const calls = []
+  const planner = useStudyPlanner({
+    waitForBackend: () => new Promise((resolve) => { releaseBackend = resolve }),
+    requestChat: async (payload) => { calls.push(payload); return { answer: '# Ready plan', generatedAt: new Date().toISOString() } },
+  })
+  validProfile(planner)
+  const first = planner.submitProfile()
+  assert.equal(await planner.submitProfile(), false)
+  assert.equal(planner.isSubmitting.value, true)
+  assert.equal(calls.length, 0)
+  releaseBackend(true)
+  assert.equal(await first, true)
+  assert.equal(calls.length, 1)
+})
+
+test('backend readiness failure preserves input and retry can recover', async () => {
+  clearStorage(); let ready = false; let calls = 0
+  const planner = useStudyPlanner({
+    waitForBackend: async () => ready,
+    requestChat: async () => { calls += 1; return { answer: '# Recovered', generatedAt: new Date().toISOString() } },
+  })
+  validProfile(planner); planner.adjustmentMessage.value = 'Kurangi intensitas belajar.'
+  assert.equal(await planner.submitAdjustment(), false)
+  assert.equal(planner.adjustmentMessage.value, 'Kurangi intensitas belajar.')
+  assert.equal(calls, 0)
+  ready = true
+  assert.equal(await planner.retryRequest(), true)
+  assert.equal(calls, 1)
+})
 
 test('three-step validation only reports fields belonging to the active step', () => {
   const profile = { subject: '', goal: '', level: 'beginner', language: 'id', durationDays: 0, dailyMinutes: 0, studyDays: [], learningStyle: 'practice', intensity: 'normal' }

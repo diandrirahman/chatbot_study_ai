@@ -9,10 +9,12 @@ import StudyPlanWorkspace from './components/StudyPlanWorkspace.vue'
 import StudyProfileForm from './components/StudyProfileForm.vue'
 import { useStudyPlanner } from './composables/useStudyPlanner.js'
 import { useLearningProgress } from './composables/useLearningProgress.js'
+import { useBackendReadiness } from './composables/useBackendReadiness.js'
 import './styles/app.css'
 
-const planner = useStudyPlanner()
-const learning = useLearningProgress()
+const backend = useBackendReadiness()
+const planner = useStudyPlanner({ waitForBackend: backend.ensureReady })
+const learning = useLearningProgress({ waitForBackend: backend.ensureReady })
 const assistantOpen = ref(false)
 const clearDialogOpen = ref(false)
 const editAfterError = ref(false)
@@ -21,6 +23,7 @@ const hasPlan = computed(() => planner.history.value.some((message) => message.r
 const interfaceLanguage = computed(() => hasPlan.value ? planner.profile.language : 'en')
 const isInitialLoading = computed(() => planner.conversationState.value === 'loading' && !hasPlan.value)
 const isInitialError = computed(() => planner.conversationState.value === 'error' && !hasPlan.value && !editAfterError.value)
+const generationState = computed(() => isInitialError.value ? 'error' : backend.status.value === 'warming' ? 'warming' : 'loading')
 const showSetup = computed(() => !hasPlan.value && !isInitialLoading.value && !isInitialError.value)
 const planAnswer = computed(() => planner.history.value.find((message) => message.role === 'assistant')?.content ?? '')
 
@@ -60,7 +63,10 @@ const clearEverything = () => {
   editAfterError.value = true
 }
 
-onMounted(() => { if (hasPlan.value && !learning.sessions.value.length) syncLearning({ responseType: 'plan-created' }) })
+onMounted(() => {
+  void backend.warmUp()
+  if (hasPlan.value && !learning.sessions.value.length) syncLearning({ responseType: 'plan-created' })
+})
 </script>
 
 <template>
@@ -72,11 +78,11 @@ onMounted(() => { if (hasPlan.value && !learning.sessions.value.length) syncLear
       <PlanLiveSummary :profile="planner.profile" />
     </main>
 
-    <GenerationProgress v-else-if="isInitialLoading || isInitialError" :state="isInitialLoading ? 'loading' : 'error'" :error-message="planner.requestError.value" @retry="retryRequest" @edit-profile="editAfterError = true" />
+    <GenerationProgress v-else-if="isInitialLoading || isInitialError" :state="generationState" :language="planner.profile.language" :error-message="planner.requestError.value" @retry="retryRequest" @edit-profile="editAfterError = true" />
 
     <StudyPlanWorkspace v-else :profile="planner.profile" :history="planner.history.value" :sessions="learning.sessions.value" :learning-progress="learning.progress" :current-session="learning.selectedSession.value" :next-session="learning.nextSession.value" :completion-percent="learning.completionPercent.value" :mastery-percent="learning.masteryPercent.value" :completed-count="learning.completedCount.value" :sessions-loading="learning.sessionsLoading.value" :sessions-error="learning.sessionsError.value" :quiz-loading-id="learning.quizLoadingId.value" :quiz-error="learning.quizError.value" :session-status="learning.sessionStatus" @open-assistant="assistantOpen = true" @prepare-adjustment="prepareAdjustment" @select-session="learning.selectSession" @continue-session="learning.selectNextSession" @retry-sessions="syncLearning({ responseType: 'plan-created' })" @toggle-activity="learning.toggleActivity" @load-quiz="learning.ensureQuiz(planner.profile, $event)" @answer-quiz="learning.answerQuestion" @submit-quiz="learning.submitQuiz" @retry-quiz="learning.retryQuiz" />
 
-    <AssistantDrawer :open="assistantOpen" :history="planner.history.value" :model-value="planner.adjustmentMessage.value" :error="planner.adjustmentError.value" :request-error="hasPlan && planner.conversationState.value === 'error' ? planner.requestError.value : ''" :submitting="planner.isSubmitting.value" :language="interfaceLanguage" @close="assistantOpen = false" @update:model-value="planner.adjustmentMessage.value = $event" @submit-adjustment="submitAdjustment" @retry="retryRequest" />
+    <AssistantDrawer :open="assistantOpen" :history="planner.history.value" :model-value="planner.adjustmentMessage.value" :error="planner.adjustmentError.value" :request-error="hasPlan && planner.conversationState.value === 'error' ? planner.requestError.value : ''" :submitting="planner.isSubmitting.value" :preparing="backend.status.value === 'warming'" :language="interfaceLanguage" @close="assistantOpen = false" @update:model-value="planner.adjustmentMessage.value = $event" @submit-adjustment="submitAdjustment" @retry="retryRequest" />
     <ConfirmDialog :open="clearDialogOpen" :language="interfaceLanguage" @cancel="clearDialogOpen = false" @confirm="clearEverything" />
   </div>
 </template>

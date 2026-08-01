@@ -1,4 +1,4 @@
-import { Firestore } from '@google-cloud/firestore'
+import { Redis } from '@upstash/redis'
 import { rateLimit } from 'express-rate-limit'
 
 const ONE_HOUR_MS = 60 * 60 * 1000
@@ -33,17 +33,26 @@ export function dailyWindow(date, timeZone = 'Asia/Jakarta') {
   return { key, retryAfterSeconds: Math.max(1, 86400 - elapsedSeconds) }
 }
 
-export function createFirestoreUsageStore({ firestore = new Firestore(), collection = 'studymate_usage_limits' } = {}) {
+const CONSUME_SCRIPT = `
+local current = tonumber(redis.call('GET', KEYS[1]) or '0')
+local limit = tonumber(ARGV[1])
+if current >= limit then
+  return {0, current}
+end
+local next = redis.call('INCR', KEYS[1])
+if next == 1 then
+  redis.call('EXPIRE', KEYS[1], tonumber(ARGV[2]))
+end
+return {1, next}
+`
+
+export function createUpstashUsageStore({ redis = Redis.fromEnv(), prefix = 'studymate:ai-usage' } = {}) {
   return {
-    async consume({ key, limit, now }) {
-      const reference = firestore.collection(collection).doc(`ai-${key}`)
-      return firestore.runTransaction(async (transaction) => {
-        const snapshot = await transaction.get(reference)
-        const count = Number(snapshot.exists ? snapshot.data()?.count : 0) || 0
-        if (count >= limit) return { allowed: false, count }
-        transaction.set(reference, { count: count + 1, updatedAt: now.toISOString() }, { merge: true })
-        return { allowed: true, count: count + 1 }
-      })
+    async consume({ key, limit, expiresInSeconds }) {
+      const result = await redis.eval(CONSUME_SCRIPT, [`${prefix}:${key}`], [limit, Math.max(1, expiresInSeconds)])
+      const allowed = Number(result?.[0]) === 1
+      const count = Number(result?.[1]) || 0
+      return { allowed, count }
     },
   }
 }
@@ -54,7 +63,7 @@ export function createDailyUsageMiddleware({ store, limit, timeZone = 'Asia/Jaka
     const now = clock()
     const window = dailyWindow(now, timeZone)
     try {
-      const result = await store.consume({ key: window.key, limit: asPositiveInteger(limit), now })
+      const result = await store.consume({ key: window.key, limit: asPositiveInteger(limit), expiresInSeconds: window.retryAfterSeconds })
       if (!result.allowed) throw new UsageLimitError('RATE_LIMITED', 429, window.retryAfterSeconds)
       next()
     } catch (error) {
@@ -82,7 +91,7 @@ export function createAiUsageGuards({ environment = process.env, store } = {}) {
   const dailyLimit = asPositiveInteger(environment.AI_DAILY_LIMIT)
   const hourlyLimit = asPositiveInteger(environment.AI_HOURLY_IP_LIMIT)
   if (!dailyLimit && !hourlyLimit) return []
-  const usageStore = dailyLimit ? (store ?? createFirestoreUsageStore()) : null
+  const usageStore = dailyLimit ? (store ?? createUpstashUsageStore()) : null
   return [
     createHourlyIpMiddleware({ limit: hourlyLimit }),
     createDailyUsageMiddleware({ store: usageStore, limit: dailyLimit, timeZone: environment.APP_TIMEZONE || 'Asia/Jakarta' }),

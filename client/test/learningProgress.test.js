@@ -10,6 +10,19 @@ const profile = { subject: 'React', goal: 'Build an app', level: 'beginner', dur
 const session = (id = 's1') => ({ id, order: 1, title: 'JSX', objective: 'Understand JSX', studyDay: 'monday', durationMinutes: 60, milestone: 'Foundation', activities: [{ id: `${id}-material`, type: 'material', title: 'Read', description: 'Read JSX' }, { id: `${id}-practice`, type: 'practice', title: 'Practice', description: 'Write JSX' }] })
 const quiz = { id: 'qz', sessionId: 's1', questions: Array.from({ length: 5 }, (_, index) => ({ id: `q${index}`, prompt: `Question ${index}`, options: ['a','b','c','d'].map((id) => ({ id, text: id })), correctOptionId: 'a', explanation: 'Because' })), references: [], generatedAt: new Date().toISOString() }
 
+test('session generation waits for backend readiness before calling the API', async () => {
+  database.clear(); let ready = false; let calls = 0
+  const learning = useLearningProgress({
+    waitForBackend: async () => ready,
+    api: { requestSessions: async () => { calls += 1; return { sessions: [session()] } }, requestQuiz: async () => ({ quiz }) },
+  })
+  assert.equal(await learning.generateSessions(profile, '# Plan'), false)
+  assert.equal(calls, 0)
+  ready = true
+  assert.equal(await learning.generateSessions(profile, '# Plan'), true)
+  assert.equal(calls, 1)
+})
+
 test('learning sessions, activities, quiz attempts, and progress persist', async () => {
   database.clear(); let quizCalls = 0
   const learning = useLearningProgress({ api: { requestSessions: async () => ({ sessions: [session()] }), requestQuiz: async () => { quizCalls += 1; return { quiz } } } })

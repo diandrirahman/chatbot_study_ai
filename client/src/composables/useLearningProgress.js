@@ -56,7 +56,7 @@ function restore() {
   }
 }
 
-export function useLearningProgress({ api = defaultApi } = {}) {
+export function useLearningProgress({ api = defaultApi, waitForBackend = async () => true } = {}) {
   const saved = restore()
   const sessions = ref(saved.sessions)
   const progress = reactive(saved.progress)
@@ -118,6 +118,7 @@ export function useLearningProgress({ api = defaultApi } = {}) {
     if (sessionsLoading.value) return false
     sessionsLoading.value = true; sessionsError.value = ''
     try {
+      if (!await waitForBackend()) throw new Error('Backend unavailable')
       const previousSessions = reset ? [] : sessions.value.map(({ id, order, title, objective }) => ({ id, order, title, objective }))
       const data = await api.requestSessions({ profile: { ...profile, studyDays: [...profile.studyDays] }, planMarkdown, previousSessions, adjustment })
       if (!Array.isArray(data.sessions) || !data.sessions.every(validSession)) throw new Error('Invalid sessions')
@@ -137,7 +138,7 @@ export function useLearningProgress({ api = defaultApi } = {}) {
     const item = ensureProgress(session.id); if (item.quiz && !force) return true
     if (quizLoadingId.value) return false
     quizLoadingId.value = session.id; quizError.value = ''
-    try { const data = await api.requestQuiz({ profile: { ...profile, studyDays: [...profile.studyDays] }, session }); if (!validQuiz(data.quiz)) throw new Error('Invalid quiz'); item.quiz = data.quiz; item.answers = {}; item.showResult = false; persist(); return true }
+    try { if (!await waitForBackend()) throw new Error('Backend unavailable'); const data = await api.requestQuiz({ profile: { ...profile, studyDays: [...profile.studyDays] }, session }); if (!validQuiz(data.quiz)) throw new Error('Invalid quiz'); item.quiz = data.quiz; item.answers = {}; item.showResult = false; persist(); return true }
     catch (error) { quizError.value = error?.code === 'RATE_LIMITED' ? 'rate-limited' : 'quiz-load-failed'; return false }
     finally { quizLoadingId.value = null }
   }

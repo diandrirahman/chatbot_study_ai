@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { createApp } from '../src/app.js'
-import { createFirestoreUsageStore, dailyWindow } from '../src/middleware/usageLimit.js'
+import { createUpstashUsageStore, dailyWindow } from '../src/middleware/usageLimit.js'
 import { GeminiServiceError } from '../src/services/geminiService.js'
 
 const profile = { subject: 'Matematika', goal: 'Memahami aljabar dasar', level: 'beginner', durationDays: 14, dailyMinutes: 60, studyDays: ['monday'], learningStyle: 'practice', intensity: 'normal', language: 'id' }
@@ -23,24 +23,25 @@ test('daily window uses Asia/Jakarta and reports seconds until reset', () => {
   assert.equal(dailyWindow(new Date('2026-07-31T17:00:00.000Z'), 'Asia/Jakarta').key, '2026-08-01')
 })
 
-test('Firestore transaction allows only one concurrent request at the final slot', async () => {
+test('Upstash atomic script allows only one concurrent request at the final slot', async () => {
   let count = 99
   let queue = Promise.resolve()
-  const firestore = {
-    collection: () => ({ doc: () => ({}) }),
-    runTransaction(callback) {
-      const execution = queue.then(() => callback({
-        get: async () => ({ exists: true, data: () => ({ count }) }),
-        set: (_reference, data) => { count = data.count },
-      }))
+  const redis = {
+    eval(_script, _keys, args) {
+      const execution = queue.then(() => {
+        const limit = Number(args[0])
+        if (count >= limit) return [0, count]
+        count += 1
+        return [1, count]
+      })
       queue = execution.catch(() => {})
       return execution
     },
   }
-  const store = createFirestoreUsageStore({ firestore })
+  const store = createUpstashUsageStore({ redis })
   const results = await Promise.all([
-    store.consume({ key: '2026-08-01', limit: 100, now: new Date() }),
-    store.consume({ key: '2026-08-01', limit: 100, now: new Date() }),
+    store.consume({ key: '2026-08-01', limit: 100, expiresInSeconds: 3600 }),
+    store.consume({ key: '2026-08-01', limit: 100, expiresInSeconds: 3600 }),
   ])
   assert.deepEqual(results.map((result) => result.allowed), [true, false])
   assert.equal(count, 100)
@@ -67,7 +68,7 @@ test('health and invalid requests do not consume the daily AI quota', async () =
   })
 })
 
-test('provider failures consume quota and Firestore failures fail closed', async () => {
+test('provider failures consume quota and Upstash failures fail closed', async () => {
   const store = memoryUsageStore()
   let providerCalls = 0
   const failingProvider = createApp({
@@ -82,7 +83,7 @@ test('provider failures consume quota and Firestore failures fail closed', async
 
   const unavailableStore = createApp({
     environment: { AI_DAILY_LIMIT: '1', AI_HOURLY_IP_LIMIT: '0' },
-    usageStore: { consume: async () => { throw new Error('private Firestore detail') } },
+    usageStore: { consume: async () => { throw new Error('private Upstash detail') } },
     generateStudyPlan: async () => { providerCalls += 1; return { answer: '# Plan', generatedAt: new Date().toISOString() } },
   })
   await withServer(unavailableStore, async (baseUrl) => {
@@ -90,7 +91,7 @@ test('provider failures consume quota and Firestore failures fail closed', async
     const body = await response.json()
     assert.equal(response.status, 503)
     assert.equal(body.error.code, 'AI_SERVICE_ERROR')
-    assert.doesNotMatch(JSON.stringify(body), /Firestore|private/i)
+    assert.doesNotMatch(JSON.stringify(body), /Upstash|private/i)
     assert.equal(providerCalls, 1)
   })
 })

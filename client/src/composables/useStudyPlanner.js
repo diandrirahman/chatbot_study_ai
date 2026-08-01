@@ -27,7 +27,7 @@ function createPlanMessage(profile) {
     : `Create a ${profile.durationDays}-day ${profile.subject} study plan to achieve: ${profile.goal}`
 }
 
-export function useStudyPlanner({ requestChat = defaultRequestChat } = {}) {
+export function useStudyPlanner({ requestChat = defaultRequestChat, waitForBackend = async () => true } = {}) {
   const saved = restoredState(); const profile = reactive(saved.profile); const history = ref(saved.history)
   const profileErrors = ref({}); const adjustmentMessage = ref(''); const adjustmentError = ref(''); const isSubmitting = ref(false); const pendingMessage = ref('')
   const conversationState = ref(saved.restored ? 'restored' : 'empty'); const requestError = ref(''); const lastResponseType = ref(''); let failedRequest = null; let requestSequence = 0
@@ -41,6 +41,11 @@ export function useStudyPlanner({ requestChat = defaultRequestChat } = {}) {
     isSubmitting.value = true; pendingMessage.value = payload.message; conversationState.value = 'loading'; requestError.value = ''
     if (payload.mode === 'adjust-study-plan') adjustmentMessage.value = ''
     try {
+      if (!await waitForBackend()) {
+        const unavailable = new Error('Backend unavailable')
+        unavailable.code = 'BACKEND_UNAVAILABLE'
+        throw unavailable
+      }
       const data = await requestChat(payload)
       if (sequence !== requestSequence) return false
       history.value = boundHistory([...history.value, { role: 'user', content: payload.message }, { role: 'assistant', content: data.answer }]) ?? history.value
@@ -54,7 +59,9 @@ export function useStudyPlanner({ requestChat = defaultRequestChat } = {}) {
       failedRequest = payload
       requestError.value = error?.code === 'RATE_LIMITED'
         ? (profile.language === 'id' ? 'Batas penggunaan telah tercapai. Silakan coba lagi nanti.' : 'The usage limit has been reached. Please try again later.')
-        : 'We could not complete your request. Please try again.'
+        : error?.code === 'BACKEND_UNAVAILABLE'
+          ? (profile.language === 'id' ? 'StudyMate AI belum siap. Silakan coba lagi.' : 'StudyMate AI is not ready yet. Please try again.')
+          : (profile.language === 'id' ? 'Permintaan tidak dapat diselesaikan. Silakan coba lagi.' : 'We could not complete your request. Please try again.')
       conversationState.value = 'error'
       return false
     } finally {

@@ -1,18 +1,28 @@
 <script setup>
-import { onBeforeUnmount, ref } from 'vue'
+import { onBeforeUnmount, ref, watch } from 'vue'
 
-const props = defineProps({ state: { type: String, required: true }, errorMessage: { type: String, default: '' } })
+const props = defineProps({ state: { type: String, required: true }, errorMessage: { type: String, default: '' }, language: { type: String, default: 'en' } })
 defineEmits(['retry', 'edit-profile'])
 const activeStep = ref(0)
 const stages = ['Analysing learning goal', 'Structuring milestones', 'Distributing sessions', 'Preparing study plan']
 let timer
-if (props.state === 'loading') timer = window.setInterval(() => { activeStep.value = Math.min(stages.length - 1, activeStep.value + 1) }, 900)
+watch(() => props.state, (state) => {
+  window.clearInterval(timer)
+  timer = undefined
+  if (state === 'loading') timer = window.setInterval(() => { activeStep.value = Math.min(stages.length - 1, activeStep.value + 1) }, 900)
+}, { immediate: true })
 onBeforeUnmount(() => window.clearInterval(timer))
 </script>
 
 <template>
   <main class="generation-shell" aria-live="polite">
-    <section v-if="state === 'loading'" class="generation-panel" role="status">
+    <section v-if="state === 'warming'" class="generation-panel" role="status">
+      <div class="generation-mark" aria-hidden="true"><span></span></div>
+      <span class="section-kicker">{{ language === 'id' ? 'Menghubungkan layanan' : 'Connecting service' }}</span>
+      <h1>{{ language === 'id' ? 'Menyiapkan StudyMate AI' : 'Preparing StudyMate AI' }}</h1>
+      <p>{{ language === 'id' ? 'Profil Anda tetap aman. StudyMate sedang menyiapkan layanan AI sebelum membuat rencana.' : 'Your profile remains safe. StudyMate is preparing the AI service before creating your plan.' }}</p>
+    </section>
+    <section v-else-if="state === 'loading'" class="generation-panel" role="status">
       <div class="generation-mark" aria-hidden="true"><span></span></div>
       <span class="section-kicker">Building your learning path</span>
       <h1>Turning your profile into a practical plan</h1>
