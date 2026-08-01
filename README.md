@@ -142,36 +142,7 @@ server/              Express API
 - **API production tidak tersedia:** periksa deployment Vercel Functions dan environment production. Frontend menyediakan retry tanpa menghapus input.
 - **Semua request AI mendapat `AI_SERVICE_ERROR`:** pastikan REST URL dan REST token Upstash benar. Saat counter tidak tersedia, backend sengaja menolak request sebelum Gemini dipanggil.
 
-## Deployment: Vercel
-
-### 1. Counter Upstash Redis
-
-1. Buat database Redis pada Upstash dan pilih region yang dekat dengan Singapore.
-2. Salin REST URL dan REST token ke tempat penyimpanan secret. Jangan memasukkannya ke GitHub atau frontend.
-3. Upstash hanya dipakai untuk counter global harian. Profile, percakapan, plan, sessions, dan quiz tetap berada di browser pengguna.
-
-### 2. Frontend dan backend Vercel
-
-1. Import repository GitHub ke Vercel. Konfigurasi build Vue dan Express Function sudah tersedia pada `vercel.json`.
-2. Isi environment berikut untuk **Production** dan **Preview** melalui dashboard Vercel:
-
-   ```text
-   GEMINI_API_KEY=<secret>
-   UPSTASH_REDIS_REST_URL=<secret>
-   UPSTASH_REDIS_REST_TOKEN=<secret>
-   GEMINI_MODEL=gemini-3.5-flash-lite
-   AI_DAILY_LIMIT=100
-   AI_HOURLY_IP_LIMIT=20
-   APP_TIMEZONE=Asia/Jakarta
-   NODE_ENV=production
-   ```
-
-3. Jangan mengisi `VITE_API_BASE_URL` pada production. Frontend memakai endpoint `/api` pada domain Vercel yang sama.
-4. Deploy production lalu pastikan `GET https://URL-VERCEL/api/health` mengembalikan HTTP 200 dan body kontrak health yang terdokumentasi.
-
-Frontend memeriksa health endpoint saat halaman dibuka. Request AI menunggu pemeriksaan yang sama sehingga submit ganda tetap dicegah. Vercel tidak memerlukan cron keep-alive untuk deployment ini.
-
-### Perlindungan biaya
+## Perlindungan biaya
 
 - Setiap request valid ke chat, session generation, atau quiz generation memakai satu kuota AI.
 - Limit global adalah 100 request AI per hari dan disimpan secara atomik di Upstash Redis dengan reset zona waktu `Asia/Jakarta`.
