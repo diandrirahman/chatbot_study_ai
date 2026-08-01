@@ -1,23 +1,33 @@
 import { computed, reactive, ref, watch } from 'vue'
 import { requestChat as defaultRequestChat } from '../services/chatApi.js'
-import { HISTORY_STORAGE_KEY, PROFILE_STORAGE_KEY, boundHistory, createEmptyProfile, isStorableProfile, validateAdjustmentMessage, validateProfile } from '../utils/studyProfile.js'
+import { HISTORY_STORAGE_KEY, PLAN_STORAGE_KEY, PROFILE_STORAGE_KEY, boundHistory, createEmptyProfile, isStorableProfile, normalizeTranscript, validateAdjustmentMessage, validateProfile } from '../utils/studyProfile.js'
 
 const storage = () => { try { return window.localStorage } catch { return null } }
 const copyProfile = (profile) => ({ ...profile, studyDays: [...profile.studyDays] })
 
 function restoredState() {
   const store = storage()
-  if (!store) return { profile: createEmptyProfile(), history: [], restored: false }
+  if (!store) return { profile: createEmptyProfile(), planMarkdown: '', history: [], restored: false, migrated: false }
   try {
-    const savedProfile = store.getItem(PROFILE_STORAGE_KEY); const savedHistory = store.getItem(HISTORY_STORAGE_KEY)
-    if (savedProfile === null && savedHistory === null) return { profile: createEmptyProfile(), history: [], restored: false }
-    if (savedProfile === null || savedHistory === null) throw new Error('Incomplete state')
-    const profile = JSON.parse(savedProfile); const history = boundHistory(JSON.parse(savedHistory))
+    const savedProfile = store.getItem(PROFILE_STORAGE_KEY)
+    const savedPlan = store.getItem(PLAN_STORAGE_KEY)
+    const savedHistory = store.getItem(HISTORY_STORAGE_KEY)
+    if (savedProfile === null && savedPlan === null && savedHistory === null) return { profile: createEmptyProfile(), planMarkdown: '', history: [], restored: false, migrated: false }
+    if (savedProfile === null) throw new Error('Missing profile')
+    const profile = JSON.parse(savedProfile)
+    const history = savedHistory === null ? [] : normalizeTranscript(JSON.parse(savedHistory))
     if (!isStorableProfile(profile) || history === null) throw new Error('Invalid state')
-    return { profile, history, restored: true }
+    if (savedPlan !== null) {
+      if (!savedPlan.trim()) throw new Error('Invalid plan')
+      return { profile, planMarkdown: savedPlan.trim(), history, restored: true, migrated: false }
+    }
+
+    const planIndex = history.findIndex((message) => message.role === 'assistant')
+    if (planIndex < 0) return { profile, planMarkdown: '', history: [], restored: true, migrated: true }
+    return { profile, planMarkdown: history[planIndex].content, history: history.slice(planIndex + 1), restored: true, migrated: true }
   } catch {
-    try { store.removeItem(PROFILE_STORAGE_KEY); store.removeItem(HISTORY_STORAGE_KEY) } catch { /* unavailable storage */ }
-    return { profile: createEmptyProfile(), history: [], restored: false }
+    try { store.removeItem(PROFILE_STORAGE_KEY); store.removeItem(PLAN_STORAGE_KEY); store.removeItem(HISTORY_STORAGE_KEY) } catch { /* unavailable storage */ }
+    return { profile: createEmptyProfile(), planMarkdown: '', history: [], restored: false, migrated: false }
   }
 }
 
@@ -28,12 +38,22 @@ function createPlanMessage(profile) {
 }
 
 export function useStudyPlanner({ requestChat = defaultRequestChat, waitForBackend = async () => true } = {}) {
-  const saved = restoredState(); const profile = reactive(saved.profile); const history = ref(saved.history)
+  const saved = restoredState(); const profile = reactive(saved.profile); const planMarkdown = ref(saved.planMarkdown); const history = ref(saved.history)
   const profileErrors = ref({}); const adjustmentMessage = ref(''); const adjustmentError = ref(''); const isSubmitting = ref(false); const pendingMessage = ref('')
   const conversationState = ref(saved.restored ? 'restored' : 'empty'); const requestError = ref(''); const lastResponseType = ref(''); let failedRequest = null; let requestSequence = 0
   const hasProfileErrors = computed(() => Object.keys(profileErrors.value).length > 0)
-  const persist = () => { const store = storage(); if (!store || !isStorableProfile(profile)) return; try { store.setItem(PROFILE_STORAGE_KEY, JSON.stringify(profile)); store.setItem(HISTORY_STORAGE_KEY, JSON.stringify(boundHistory(history.value) ?? [])) } catch { /* quota/privacy must not crash */ } }
-  watch(profile, persist, { deep: true }); watch(history, persist, { deep: true })
+  const persist = () => {
+    const store = storage()
+    if (!store || !isStorableProfile(profile)) return
+    try {
+      store.setItem(PROFILE_STORAGE_KEY, JSON.stringify(profile))
+      if (planMarkdown.value) store.setItem(PLAN_STORAGE_KEY, planMarkdown.value)
+      else store.removeItem(PLAN_STORAGE_KEY)
+      store.setItem(HISTORY_STORAGE_KEY, JSON.stringify(normalizeTranscript(history.value) ?? []))
+    } catch { /* quota/privacy must not crash */ }
+  }
+  watch(profile, persist, { deep: true }); watch(planMarkdown, persist); watch(history, persist, { deep: true })
+  if (saved.migrated) persist()
 
   async function sendRequest(payload) {
     if (isSubmitting.value) return false
@@ -48,8 +68,15 @@ export function useStudyPlanner({ requestChat = defaultRequestChat, waitForBacke
       }
       const data = await requestChat(payload)
       if (sequence !== requestSequence) return false
-      history.value = boundHistory([...history.value, { role: 'user', content: payload.message }, { role: 'assistant', content: data.answer }]) ?? history.value
-      lastResponseType.value = typeof data.responseType === 'string' ? data.responseType : payload.mode === 'create-study-plan' ? 'plan-created' : 'focused-answer'
+      const responseType = typeof data.responseType === 'string' ? data.responseType : payload.mode === 'create-study-plan' ? 'plan-created' : 'focused-answer'
+      if (payload.mode === 'create-study-plan') {
+        planMarkdown.value = data.answer
+        history.value = []
+      } else {
+        history.value = [...history.value, { role: 'user', content: payload.message }, { role: 'assistant', content: data.answer, responseType }]
+        if (responseType === 'target-change') planMarkdown.value = data.answer
+      }
+      lastResponseType.value = responseType
       pendingMessage.value = ''; failedRequest = null; conversationState.value = 'success'; persist()
       return true
     } catch (error) {
@@ -73,7 +100,7 @@ export function useStudyPlanner({ requestChat = defaultRequestChat, waitForBacke
     if (isSubmitting.value) return Promise.resolve(false)
     profileErrors.value = validateProfile(profile)
     if (hasProfileErrors.value) { conversationState.value = 'empty'; return Promise.resolve(false) }
-    const payload = { mode: 'create-study-plan', message: createPlanMessage(profile), profile: copyProfile(profile), history: boundHistory(history.value) ?? [] }
+    const payload = { mode: 'create-study-plan', message: createPlanMessage(profile), profile: copyProfile(profile), history: [] }
     return sendRequest(payload)
   }
 
@@ -93,7 +120,7 @@ export function useStudyPlanner({ requestChat = defaultRequestChat, waitForBacke
   }
 
   function resetConversation() {
-    requestSequence += 1; isSubmitting.value = false; pendingMessage.value = ''; history.value = []; adjustmentMessage.value = ''; adjustmentError.value = ''; requestError.value = ''; lastResponseType.value = ''; failedRequest = null; conversationState.value = 'empty'
+    requestSequence += 1; isSubmitting.value = false; pendingMessage.value = ''; planMarkdown.value = ''; history.value = []; adjustmentMessage.value = ''; adjustmentError.value = ''; requestError.value = ''; lastResponseType.value = ''; failedRequest = null; conversationState.value = 'empty'
   }
 
   function clearPlan() {
@@ -101,8 +128,8 @@ export function useStudyPlanner({ requestChat = defaultRequestChat, waitForBacke
     Object.assign(profile, createEmptyProfile())
     profileErrors.value = {}
     const store = storage()
-    try { store?.removeItem(PROFILE_STORAGE_KEY); store?.removeItem(HISTORY_STORAGE_KEY) } catch { /* unavailable storage */ }
+    try { store?.removeItem(PROFILE_STORAGE_KEY); store?.removeItem(PLAN_STORAGE_KEY); store?.removeItem(HISTORY_STORAGE_KEY) } catch { /* unavailable storage */ }
   }
 
-  return { profile, history, profileErrors, adjustmentMessage, adjustmentError, pendingMessage, isSubmitting, conversationState, requestError, lastResponseType, hasProfileErrors, submitProfile, submitAdjustment, retryRequest, clearPlan }
+  return { profile, planMarkdown, history, profileErrors, adjustmentMessage, adjustmentError, pendingMessage, isSubmitting, conversationState, requestError, lastResponseType, hasProfileErrors, submitProfile, submitAdjustment, retryRequest, clearPlan }
 }

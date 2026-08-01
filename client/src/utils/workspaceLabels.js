@@ -1,6 +1,6 @@
 const id = {
   rateLimited: 'Batas penggunaan telah tercapai. Silakan coba lagi nanti.',
-  activePlan: 'Rencana belajar aktif', askStudyMate: 'Tanya StudyMate', planActions: 'Aksi rencana', clearPlan: 'Hapus rencana',
+  activePlan: 'Rencana belajar aktif', askStudyMate: 'Tanya StudyMate', planActions: 'Aksi rencana', regeneratePlan: 'Buat ulang', clearPlan: 'Hapus rencana',
   overview: 'Ringkasan rencana', overviewTitle: 'Rencana Anda dalam satu tampilan', sessionFocus: 'Sesi belajar', viewOverview: 'Lihat ringkasan rencana', startLearning: 'Mulai belajar',
   overallProgress: 'Kemajuan keseluruhan', percentComplete: (value) => `${value}% selesai`, completed: 'Selesai', sessionsCount: (done, total) => `${done} / ${total} sesi`, mastery: 'Penguasaan', studyTime: 'Waktu belajar', hours: (value) => `~${value} jam`, schedule: 'Jadwal', progressAria: 'Kemajuan rencana belajar',
   learningSessions: 'Sesi belajar', preparingSessions: 'Menyiapkan sesi belajar…', sessionsUnavailable: 'Sesi belajar sementara tidak tersedia', planSafe: 'Dokumen rencana lengkap Anda tetap aman.', tryAgain: 'Coba lagi',
@@ -23,7 +23,7 @@ const id = {
 
 const en = {
   rateLimited: 'The usage limit has been reached. Please try again later.',
-  activePlan: 'Active study plan', askStudyMate: 'Ask StudyMate', planActions: 'Plan actions', clearPlan: 'Clear plan',
+  activePlan: 'Active study plan', askStudyMate: 'Ask StudyMate', planActions: 'Plan actions', regeneratePlan: 'Regenerate plan', clearPlan: 'Clear plan',
   overview: 'Plan overview', overviewTitle: 'Your plan at a glance', sessionFocus: 'Learning session', viewOverview: 'View plan overview', startLearning: 'Start learning',
   overallProgress: 'Overall progress', percentComplete: (value) => `${value}% complete`, completed: 'Completed', sessionsCount: (done, total) => `${done} / ${total} sessions`, mastery: 'Mastery', studyTime: 'Study time', hours: (value) => `~${value} hours`, schedule: 'Schedule', progressAria: 'Study plan progress',
   learningSessions: 'Learning sessions', preparingSessions: 'Preparing your sessions…', sessionsUnavailable: 'Sessions are temporarily unavailable', planSafe: 'Your complete study plan remains safe.', tryAgain: 'Try again',

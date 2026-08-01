@@ -5,16 +5,15 @@ import { getWorkspaceLabels } from '../utils/workspaceLabels.js'
 import { hasLearningActivity, resolveWorkspaceMode } from '../utils/workspaceState.js'
 import LearningSessionPanel from './LearningSessionPanel.vue'
 
-const props = defineProps({ profile: { type: Object, required: true }, history: { type: Array, required: true }, sessions: { type: Array, default: () => [] }, learningProgress: { type: Object, required: true }, currentSession: { type: Object, default: null }, nextSession: { type: Object, default: null }, completionPercent: { type: Number, default: 0 }, masteryPercent: { type: Number, default: 0 }, completedCount: { type: Number, default: 0 }, sessionsLoading: Boolean, sessionsError: { type: String, default: '' }, quizLoadingId: { type: String, default: null }, quizError: { type: String, default: '' }, sessionStatus: { type: Function, required: true } })
+const props = defineProps({ profile: { type: Object, required: true }, planMarkdown: { type: String, required: true }, history: { type: Array, required: true }, sessions: { type: Array, default: () => [] }, learningProgress: { type: Object, required: true }, currentSession: { type: Object, default: null }, nextSession: { type: Object, default: null }, completionPercent: { type: Number, default: 0 }, masteryPercent: { type: Number, default: 0 }, completedCount: { type: Number, default: 0 }, sessionsLoading: Boolean, sessionsError: { type: String, default: '' }, quizLoadingId: { type: String, default: null }, quizError: { type: String, default: '' }, sessionStatus: { type: Function, required: true } })
 const emit = defineEmits(['open-assistant', 'prepare-adjustment', 'select-session', 'continue-session', 'retry-sessions', 'toggle-activity', 'load-quiz', 'answer-quiz', 'submit-quiz', 'retry-quiz'])
 const progressSummary = ref(null)
 const requestedMode = ref(null)
 
 const language = computed(() => props.profile.language === 'id' ? 'id' : 'en')
 const labels = computed(() => getWorkspaceLabels(language.value))
-const assistants = computed(() => props.history.filter((item) => item.role === 'assistant'))
-const planAnswer = computed(() => assistants.value[0]?.content ?? '')
-const latestUpdate = computed(() => assistants.value.length > 1 ? assistants.value.at(-1)?.content : '')
+const planAnswer = computed(() => props.planMarkdown)
+const latestUpdate = computed(() => [...props.history].reverse().find((item) => item.role === 'assistant' && item.responseType === 'plan-adjustment')?.content ?? '')
 const hasStartedLearning = computed(() => hasLearningActivity(props.sessions, props.learningProgress))
 const workspaceMode = computed(() => resolveWorkspaceMode(requestedMode.value, hasStartedLearning.value))
 const milestones = computed(() => {
