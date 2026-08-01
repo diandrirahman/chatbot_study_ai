@@ -1,7 +1,6 @@
 import { Redis } from '@upstash/redis'
-import { rateLimit } from 'express-rate-limit'
+import { createHash } from 'node:crypto'
 
-const ONE_HOUR_MS = 60 * 60 * 1000
 const passThrough = (_request, _response, next) => next()
 const asPositiveInteger = (value) => {
   const parsed = Number(value)
@@ -32,6 +31,16 @@ export function dailyWindow(date, timeZone = 'Asia/Jakarta') {
   const elapsedSeconds = parts.hour * 3600 + parts.minute * 60 + parts.second
   return { key, retryAfterSeconds: Math.max(1, 86400 - elapsedSeconds) }
 }
+
+export function hourlyWindow(date) {
+  const hourStart = new Date(date)
+  hourStart.setUTCMinutes(0, 0, 0)
+  const key = hourStart.toISOString().slice(0, 13)
+  const retryAfterSeconds = Math.max(1, Math.ceil((hourStart.getTime() + 3600000 - date.getTime()) / 1000))
+  return { key, retryAfterSeconds }
+}
+
+const hashIp = (value) => createHash('sha256').update(String(value || 'unknown')).digest('hex')
 
 const CONSUME_SCRIPT = `
 local current = tonumber(redis.call('GET', KEYS[1]) or '0')
@@ -72,28 +81,28 @@ export function createDailyUsageMiddleware({ store, limit, timeZone = 'Asia/Jaka
   }
 }
 
-export function createHourlyIpMiddleware({ limit }) {
+export function createHourlyIpMiddleware({ store, limit, clock = () => new Date() }) {
   const parsedLimit = asPositiveInteger(limit)
-  if (!parsedLimit) return passThrough
-  return rateLimit({
-    windowMs: ONE_HOUR_MS,
-    limit: parsedLimit,
-    standardHeaders: 'draft-7',
-    legacyHeaders: false,
-    handler: (_request, response) => {
-      response.set('Retry-After', String(3600))
-      response.status(429).json({ success: false, error: { code: 'RATE_LIMITED', message: 'Terlalu banyak permintaan. Silakan coba lagi nanti.' } })
-    },
-  })
+  if (!store || !parsedLimit) return passThrough
+  return async function hourlyIpMiddleware(request, _response, next) {
+    const window = hourlyWindow(clock())
+    try {
+      const result = await store.consume({ key: `ip:${hashIp(request.ip)}:${window.key}`, limit: parsedLimit, expiresInSeconds: window.retryAfterSeconds })
+      if (!result.allowed) throw new UsageLimitError('RATE_LIMITED', 429, window.retryAfterSeconds)
+      next()
+    } catch (error) {
+      next(error instanceof UsageLimitError ? error : new UsageLimitError('AI_SERVICE_ERROR', 503))
+    }
+  }
 }
 
 export function createAiUsageGuards({ environment = process.env, store } = {}) {
   const dailyLimit = asPositiveInteger(environment.AI_DAILY_LIMIT)
   const hourlyLimit = asPositiveInteger(environment.AI_HOURLY_IP_LIMIT)
   if (!dailyLimit && !hourlyLimit) return []
-  const usageStore = dailyLimit ? (store ?? createUpstashUsageStore()) : null
+  const usageStore = dailyLimit || hourlyLimit ? (store ?? createUpstashUsageStore()) : null
   return [
-    createHourlyIpMiddleware({ limit: hourlyLimit }),
+    createHourlyIpMiddleware({ store: usageStore, limit: hourlyLimit }),
     createDailyUsageMiddleware({ store: usageStore, limit: dailyLimit, timeZone: environment.APP_TIMEZONE || 'Asia/Jakarta' }),
   ]
 }

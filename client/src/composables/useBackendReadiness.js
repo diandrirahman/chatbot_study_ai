@@ -6,7 +6,7 @@ const HEALTH_MESSAGE = 'StudyMate AI API is running'
 export function useBackendReadiness({
   fetchImplementation = globalThis.fetch,
   baseUrl = configuredApiBaseUrl,
-  timeoutMs = 90000,
+  timeoutMs = 15000,
   freshForMs = 10 * 60 * 1000,
   clock = () => Date.now(),
 } = {}) {

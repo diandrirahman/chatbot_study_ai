@@ -24,7 +24,7 @@ StudyMate AI adalah aplikasi perencana belajar berbasis AI. Pengguna membuat Stu
 Browser Vue SPA (Vercel)
   |-- Study Profile, plan, roadmap, sesi, kuis, progress
   |-- localStorage
-  `-- HTTPS --> Express API (Render)
+  `-- same origin --> Express API (Vercel Function)
                   |-- validator, limiter, dan error handler
                   |-- Upstash Redis: counter kuota AI
                   `-- Gemini: plan, sesi, dan kuis
@@ -139,11 +139,10 @@ server/              Express API
 - **Plan atau progress tidak muncul setelah refresh:** periksa apakah browser mengizinkan localStorage untuk origin lokal. Menghapus data situs akan menghapus state belajar.
 - **Perubahan `.env` tidak terbaca:** hentikan proses `npm run dev`, lalu jalankan kembali agar backend memuat environment terbaru.
 - **Health endpoint gagal:** pastikan backend berjalan di port yang sesuai `PORT` pada `server/.env`.
-- **Render sedang bangun:** tunggu status “Menyiapkan StudyMate AI” selesai. Frontend menunggu health hingga sekitar 90 detik dan menyediakan retry tanpa menghapus input.
+- **API production tidak tersedia:** periksa deployment Vercel Functions dan environment production. Frontend menyediakan retry tanpa menghapus input.
 - **Semua request AI mendapat `AI_SERVICE_ERROR`:** pastikan REST URL dan REST token Upstash benar. Saat counter tidak tersedia, backend sengaja menolak request sebelum Gemini dipanggil.
-- **Cron gagal setelah backend lama idle:** request pertama dapat melewati timeout ketika membangunkan Render Free. Periksa bahwa eksekusi berikutnya kembali menerima HTTP 200.
 
-## Deployment: Vercel dan Render
+## Deployment: Vercel
 
 ### 1. Counter Upstash Redis
 
@@ -151,22 +150,15 @@ server/              Express API
 2. Salin REST URL dan REST token ke tempat penyimpanan secret. Jangan memasukkannya ke GitHub atau frontend.
 3. Upstash hanya dipakai untuk counter global harian. Profile, percakapan, plan, sessions, dan quiz tetap berada di browser pengguna.
 
-### 2. Backend Render
+### 2. Frontend dan backend Vercel
 
-1. Hubungkan repository GitHub ke Render sebagai **Blueprint** menggunakan `render.yaml`, atau buat satu Web Service dengan konfigurasi ekuivalen.
-2. Gunakan branch `main`, runtime Node, plan Free, dan region Singapore.
-3. Isi secret yang ditandai `sync: false` pada dashboard Render:
+1. Import repository GitHub ke Vercel. Konfigurasi build Vue dan Express Function sudah tersedia pada `vercel.json`.
+2. Isi environment berikut untuk **Production** dan **Preview** melalui dashboard Vercel:
 
    ```text
    GEMINI_API_KEY=<secret>
-   ALLOWED_ORIGINS=https://nama-project.vercel.app
    UPSTASH_REDIS_REST_URL=<secret>
    UPSTASH_REDIS_REST_TOKEN=<secret>
-   ```
-
-4. Pastikan environment non-secret berikut tersedia:
-
-   ```text
    GEMINI_MODEL=gemini-3.5-flash-lite
    AI_DAILY_LIMIT=100
    AI_HOURLY_IP_LIMIT=20
@@ -174,24 +166,10 @@ server/              Express API
    NODE_ENV=production
    ```
 
-5. Deploy lalu pastikan `GET https://URL-RENDER/api/health` mengembalikan HTTP 200 dan body kontrak health yang terdokumentasi.
+3. Jangan mengisi `VITE_API_BASE_URL` pada production. Frontend memakai endpoint `/api` pada domain Vercel yang sama.
+4. Deploy production lalu pastikan `GET https://URL-VERCEL/api/health` mengembalikan HTTP 200 dan body kontrak health yang terdokumentasi.
 
-### 3. Frontend Vercel
-
-1. Import repository GitHub ke Vercel. Konfigurasi build sudah tersedia pada `vercel.json`.
-2. Tambahkan `VITE_API_BASE_URL=https://URL-RENDER` pada Environment Variables Vercel.
-3. Deploy production dan salin URL production ke `ALLOWED_ORIGINS` Render, lalu deploy ulang backend bila origin berubah.
-
-Frontend langsung memanggil health endpoint ketika halaman dibuka. Form tetap dapat diisi selama Render bangun dari kondisi idle, dan request AI menunggu backend siap tanpa mengirim submit ganda.
-
-### 4. Keep-alive best-effort
-
-1. Buat akun di [cron-job.org](https://cron-job.org/).
-2. Tambahkan HTTP GET ke `https://URL-RENDER/api/health` dengan interval setiap 10 menit.
-3. Aktifkan notifikasi kegagalan dan pastikan execution history menerima HTTP 200.
-4. Jangan arahkan cron ke endpoint chat, sessions, atau quiz karena endpoint tersebut memakai kuota AI.
-
-Render Free dapat tidur atau direstart sewaktu-waktu. Monitor mengurangi kemungkinan cold start, tetapi bukan pengganti SLA instance berbayar. Jika cron pertama membangunkan service dan melewati timeout monitor, request berikutnya seharusnya berhasil setelah service aktif.
+Frontend memeriksa health endpoint saat halaman dibuka. Request AI menunggu pemeriksaan yang sama sehingga submit ganda tetap dicegah. Vercel tidak memerlukan cron keep-alive untuk deployment ini.
 
 ### Perlindungan biaya
 

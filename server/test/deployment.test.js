@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { createApp } from '../src/app.js'
-import { createUpstashUsageStore, dailyWindow } from '../src/middleware/usageLimit.js'
+import { createUpstashUsageStore, dailyWindow, hourlyWindow } from '../src/middleware/usageLimit.js'
 import { GeminiServiceError } from '../src/services/geminiService.js'
 
 const profile = { subject: 'Matematika', goal: 'Memahami aljabar dasar', level: 'beginner', durationDays: 14, dailyMinutes: 60, studyDays: ['monday'], learningStyle: 'practice', intensity: 'normal', language: 'id' }
@@ -21,6 +21,10 @@ function memoryUsageStore(initialCount = 0) {
 test('daily window uses Asia/Jakarta and reports seconds until reset', () => {
   assert.deepEqual(dailyWindow(new Date('2026-07-31T16:59:50.000Z'), 'Asia/Jakarta'), { key: '2026-07-31', retryAfterSeconds: 10 })
   assert.equal(dailyWindow(new Date('2026-07-31T17:00:00.000Z'), 'Asia/Jakarta').key, '2026-08-01')
+})
+
+test('hourly window reports the fixed UTC hour and seconds until reset', () => {
+  assert.deepEqual(hourlyWindow(new Date('2026-08-01T03:59:50.000Z')), { key: '2026-08-01T03', retryAfterSeconds: 10 })
 })
 
 test('Upstash atomic script allows only one concurrent request at the final slot', async () => {
@@ -97,8 +101,20 @@ test('provider failures consume quota and Upstash failures fail closed', async (
 })
 
 test('hourly IP limiter blocks the next valid request and CORS only authorizes configured origins', async () => {
+  const keys = []
+  const counters = new Map()
+  const store = {
+    async consume({ key, limit }) {
+      keys.push(key)
+      const count = counters.get(key) ?? 0
+      if (count >= limit) return { allowed: false, count }
+      counters.set(key, count + 1)
+      return { allowed: true, count: count + 1 }
+    },
+  }
   const app = createApp({
     environment: { AI_DAILY_LIMIT: '0', AI_HOURLY_IP_LIMIT: '2', ALLOWED_ORIGINS: 'https://studymate.vercel.app', NODE_ENV: 'production' },
+    usageStore: store,
     generateStudyPlan: async () => ({ answer: '# Plan', generatedAt: new Date().toISOString() }),
   })
   await withServer(app, async (baseUrl) => {
@@ -111,5 +127,6 @@ test('hourly IP limiter blocks the next valid request and CORS only authorizes c
     const limited = await post(baseUrl)
     assert.equal(limited.status, 429)
     assert.equal((await limited.json()).error.code, 'RATE_LIMITED')
+    assert.ok(keys.every((key) => !key.includes('127.0.0.1')))
   })
 })

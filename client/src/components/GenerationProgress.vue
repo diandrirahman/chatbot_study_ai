@@ -18,9 +18,9 @@ onBeforeUnmount(() => window.clearInterval(timer))
   <main class="generation-shell" aria-live="polite">
     <section v-if="state === 'warming'" class="generation-panel" role="status">
       <div class="generation-mark" aria-hidden="true"><span></span></div>
-      <span class="section-kicker">{{ language === 'id' ? 'Menghubungkan layanan' : 'Connecting service' }}</span>
-      <h1>{{ language === 'id' ? 'Menyiapkan StudyMate AI' : 'Preparing StudyMate AI' }}</h1>
-      <p>{{ language === 'id' ? 'Profil Anda tetap aman. StudyMate sedang menyiapkan layanan AI sebelum membuat rencana.' : 'Your profile remains safe. StudyMate is preparing the AI service before creating your plan.' }}</p>
+      <span class="section-kicker">{{ language === 'id' ? 'Memeriksa layanan' : 'Checking service' }}</span>
+      <h1>{{ language === 'id' ? 'Menghubungkan StudyMate AI' : 'Connecting to StudyMate AI' }}</h1>
+      <p>{{ language === 'id' ? 'Profil Anda tetap aman saat StudyMate memastikan layanan AI tersedia.' : 'Your profile remains safe while StudyMate checks that the AI service is available.' }}</p>
     </section>
     <section v-else-if="state === 'loading'" class="generation-panel" role="status">
       <div class="generation-mark" aria-hidden="true"><span></span></div>
